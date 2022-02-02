@@ -22,6 +22,6 @@ func OpenDatabase() (db *sql.DB, err error) {
     return db, err
 }
 
-func CloseDatabase(db *sql.DB){
+func CloseDatabase(db *sql.DB) {
     defer db.Close()
 }

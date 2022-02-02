@@ -1,13 +1,13 @@
 package main
 
 import (
+    "encoding/json"
     "fmt"
+    "io/ioutil"
     "log"
     "net/http"
-    "time"
-    "encoding/json"
-    "io/ioutil"
     "strconv"
+    "time"
 
     "github.com/gorilla/mux"
 
@@ -15,46 +15,45 @@ import (
     "currency-converter/tradermade"
 )
 
-type ConvertData struct {
-    Date time.Time `json:"date"`
-    From string `json:"from"`
-    To string `json:"to"`
-    Amount json.Number `json:"amount"`
-}
-
 type Transaction struct {
-    Id int `json:"id"`
-    Date time.Time `json:"date"`
-    FromCurrencyCode string `json:"from_currency_code"`
-    ToCurrencyCode string `json:"to_currency_code"`
-    Amount float64 `json:"amount"`
-    ConversionRate float64 `json:"conversion_rate"`
-    ConvertedAmount float64 `json:"converted_amount"`
+    Id int                      `json:"id"`
+    Date time.Time              `json:"date"`
+    From string                 `json:"from"`
+    To string                   `json:"to"`
+    Amount json.Number          `json:"amount"`
+    Rate float64                `json:"rate"`
+    ConvertedAmount float64     `json:"converted_amount"`
 }
 
 
 func convertCurrency(w http.ResponseWriter, r *http.Request) {
     fmt.Println("Endpoint Hit: convertCurrency")
 
-    var data ConvertData
+    var data Transaction
     reqBody, _ := ioutil.ReadAll(r.Body)
     json.Unmarshal(reqBody, &data)
 
-    var amount, convertedAmount float64
+    var amount float64
     amount, _ = strconv.ParseFloat(fmt.Sprint(data.Amount), 64)
 
     // get the current live conversion rate from TraderMade API
     rate := TraderMade.GetCurrencyRate(data.From, data.To)
-    convertedAmount = amount * rate
+    data.ConvertedAmount = amount * rate
+    data.Rate = rate
 
     db, err := DatabaseManager.OpenDatabase()
 
     sqlStatement := `
         INSERT INTO hasurapg.transactions
-            (date, from_currency_code, to_currency_code, amount, conversion_rate, converted_amount)
+            (date, from_currency_code, to_currency_code, amount,
+            conversion_rate, converted_amount)
         VALUES
-            ($1, $2, $3, $4, $5, $6)`
-    _, err = db.Exec(sqlStatement, data.Date, data.From, data.To, amount, rate, convertedAmount)
+            ($1, $2, $3, $4, $5, $6)
+        RETURNING id`
+
+    err = db.QueryRow(sqlStatement, data.Date, data.From, data.To, data.Amount,
+        data.Rate, data.ConvertedAmount).Scan(&data.Id)
+
     if err != nil {
         panic(err)
     }
@@ -71,7 +70,8 @@ func returnAllTransactions(w http.ResponseWriter, r *http.Request) {
 
     rows, err := db.Query(
         `SELECT
-            id, date, from_currency_code, to_currency_code, amount, conversion_rate, converted_amount
+            id, date, from_currency_code, to_currency_code, amount,
+            conversion_rate, converted_amount
         FROM hasurapg.transactions`)
     if err != nil {
         panic(err)
@@ -83,9 +83,9 @@ func returnAllTransactions(w http.ResponseWriter, r *http.Request) {
     for rows.Next() {
         var transaction Transaction
         err := rows.Scan(
-            &transaction.Id, &transaction.Date, &transaction.FromCurrencyCode,
-            &transaction.ToCurrencyCode, &transaction.Amount,
-            &transaction.ConversionRate, &transaction.ConvertedAmount)
+            &transaction.Id, &transaction.Date, &transaction.From,
+            &transaction.To, &transaction.Amount,
+            &transaction.Rate, &transaction.ConvertedAmount)
         transactions = append(transactions, transaction)
 
         if err != nil {
